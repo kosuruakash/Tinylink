@@ -1,56 +1,39 @@
 const express = require("express");
-const dotenv = require("dotenv").config();
 const cors = require("cors");
 const { Pool } = require("pg");
 
 const app = express();
 
-// Middleware
+// CORS - Allow Vercel frontend
 app.use(
   cors({
-    origin: "http://localhost:3001", // Your React frontend
+    origin: [
+      "http://localhost:3001",
+      "https://your-frontend-app.vercel.app",
+      "https://*.vercel.app",
+    ],
     credentials: true,
   })
 );
+
 app.use(express.json());
 
 // Database configuration
-const { PGHOST, PGDATABASE, PGUSER, PGPASSWORD } = process.env;
-
-// Create PostgreSQL connection pool
 const db = new Pool({
-  host: PGHOST,
-  database: PGDATABASE,
-  user: PGUSER,
-  password: PGPASSWORD,
-  port: 5432,
+  connectionString: process.env.DATABASE_URL,
   ssl: {
-    require: true,
+    rejectUnauthorized: false,
   },
 });
 
 // Test database connection
-const initializeDBAndServer = async () => {
-  try {
-    // Test connection
-    await db.query("SELECT NOW()");
-    console.log("Database connected successfully!");
-
-    // Start server
-    app.listen(3000, () => {
-      console.log("Server Running at http://localhost:3000/");
-    });
-  } catch (e) {
-    console.log(`DB Error: ${e.message}`);
-    process.exit(1);
-  }
-};
-
-initializeDBAndServer();
+db.query("SELECT NOW()")
+  .then(() => console.log("Database connected successfully"))
+  .catch((err) => console.log("Database connection failed:", err));
 
 // ==================== API ENDPOINTS ====================
 
-// 1. HEALTH CHECK - Updated to match PDF exactly
+// 1. HEALTH CHECK
 app.get("/healthz", (req, res) => {
   res.status(200).json({
     ok: true,
@@ -58,12 +41,10 @@ app.get("/healthz", (req, res) => {
   });
 });
 
-// 2. CREATE SHORT LINK - Changed from /generate to /api/links
+// 2. CREATE SHORT LINK
 app.post("/api/links", async (req, res) => {
   try {
     const { longurl, shortcode } = req.body;
-
-    console.log("Received create request:", { longurl, shortcode });
 
     // Validate URL format
     try {
@@ -74,7 +55,7 @@ app.post("/api/links", async (req, res) => {
       });
     }
 
-    // Validate short code format (alphanumeric, 6-8 chars as per PDF) - FIXED THIS
+    // Validate short code format
     const codeRegex = /^[A-Za-z0-9]{6,8}$/;
     if (!codeRegex.test(shortcode)) {
       return res.status(400).json({
@@ -103,14 +84,11 @@ app.post("/api/links", async (req, res) => {
     );
 
     const newLink = result.rows[0];
-    const shortUrl = `http://localhost:3000/${shortcode}`;
-
-    console.log("Created new link:", newLink);
 
     res.status(201).json({
       success: true,
-      shortUrl: shortUrl,
-      short_code: shortcode, // Added for frontend compatibility
+      short_code: shortcode,
+      long_url: longurl,
       id: newLink.id,
       message: "URL shortened successfully!",
     });
@@ -122,7 +100,7 @@ app.post("/api/links", async (req, res) => {
   }
 });
 
-// 3. LIST ALL LINKS - New endpoint as per PDF
+// 3. LIST ALL LINKS
 app.get("/api/links", async (req, res) => {
   try {
     const result = await db.query(
@@ -135,29 +113,10 @@ app.get("/api/links", async (req, res) => {
   }
 });
 
-// 4. GET SINGLE LINK BY ID - Keep your original but add the PDF endpoint
-app.get("/url/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const result = await db.query("SELECT * FROM links WHERE id = $1", [id]);
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error_msg: "Link not found" });
-    }
-
-    res.status(200).json(result.rows[0]);
-  } catch (error) {
-    console.error("Get link stats error:", error);
-    res.status(500).json({ error_msg: "Failed to fetch link stats" });
-  }
-});
-
-// 5. GET SINGLE LINK BY SHORT CODE (STATS) - Changed from /stats/:shortcode to /api/links/:code
+// 4. GET SINGLE LINK BY SHORT CODE
 app.get("/api/links/:code", async (req, res) => {
   try {
     const { code } = req.params;
-
-    console.log("Fetching stats for code:", code);
 
     const result = await db.query("SELECT * FROM links WHERE short_code = $1", [
       code,
@@ -174,39 +133,10 @@ app.get("/api/links/:code", async (req, res) => {
   }
 });
 
-// 6. DELETE LINK BY ID - Keep your original but add the PDF endpoint
-app.delete("/delete/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    console.log("Deleting link with id:", id);
-
-    const result = await db.query(
-      "DELETE FROM links WHERE id = $1 RETURNING *",
-      [id]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error_msg: "Link not found" });
-    }
-
-    console.log("Deleted link:", result.rows[0]);
-    res.json({
-      message: "Link deleted successfully",
-      deletedLink: result.rows[0],
-    });
-  } catch (error) {
-    console.error("Delete link error:", error);
-    res.status(500).json({ error_msg: "Failed to delete link" });
-  }
-});
-
-// 7. DELETE LINK BY CODE - New endpoint as per PDF
+// 5. DELETE LINK BY CODE
 app.delete("/api/links/:code", async (req, res) => {
   try {
     const { code } = req.params;
-
-    console.log("Deleting link with code:", code);
 
     const result = await db.query(
       "DELETE FROM links WHERE short_code = $1 RETURNING *",
@@ -217,7 +147,6 @@ app.delete("/api/links/:code", async (req, res) => {
       return res.status(404).json({ error_msg: "Link not found" });
     }
 
-    console.log("Deleted link:", result.rows[0]);
     res.status(200).json({
       message: "Link deleted successfully",
       deletedLink: result.rows[0],
@@ -228,20 +157,16 @@ app.delete("/api/links/:code", async (req, res) => {
   }
 });
 
-// 8. REDIRECT ENDPOINT - MAIN REDIRECT FUNCTIONALITY (No change needed)
+// 6. REDIRECT ENDPOINT
 app.get("/:code", async (req, res) => {
   try {
     const { code } = req.params;
 
-    console.log("Redirect request for code:", code);
-
-    // First check if this is a valid short code
     const result = await db.query("SELECT * FROM links WHERE short_code = $1", [
       code,
     ]);
 
     if (result.rows.length === 0) {
-      console.log("Short code not found:", code);
       return res.status(404).json({
         error_msg: "Short URL not found",
         message: `The short code '${code}' does not exist.`,
@@ -251,22 +176,12 @@ app.get("/:code", async (req, res) => {
     const linkData = result.rows[0];
     const longUrl = linkData.long_url;
 
-    console.log(`Redirecting ${code} to ${longUrl}`);
-    console.log(`Previous clicks: ${linkData.clicks}`);
-
-    // Update click count and last clicked time
-    const updateResult = await db.query(
-      "UPDATE links SET clicks = clicks + 1, last_clicked_at = NOW() WHERE short_code = $1 RETURNING *",
+    // Update click count
+    await db.query(
+      "UPDATE links SET clicks = clicks + 1, last_clicked_at = NOW() WHERE short_code = $1",
       [code]
     );
 
-    const updatedLink = updateResult.rows[0];
-    console.log(
-      `Click counted for: ${code}, New click count: ${updatedLink.clicks}`
-    );
-
-    // Redirect to the long URL
-    console.log(`Sending redirect to: ${longUrl}`);
     res.redirect(302, longUrl);
   } catch (error) {
     console.error("Redirect error:", error);
@@ -277,13 +192,7 @@ app.get("/:code", async (req, res) => {
   }
 });
 
-// Error handling middleware
-app.use((error, req, res, next) => {
-  console.error("Unhandled Error:", error);
-  res.status(500).json({
-    error_msg: "Internal server error",
-    message: "Something went wrong!",
-  });
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });
-
-console.log("Backend initialization complete!");
