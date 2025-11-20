@@ -17,7 +17,6 @@ app.use(
 );
 
 app.use(express.json());
-
 // Database configuration
 const db = new Pool({
   connectionString: process.env.DATABASE_URL,
